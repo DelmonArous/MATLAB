@@ -1,0 +1,90 @@
+function [coeff, score, latent, img_pca1, img_pca2, img_pca3] = runPCA(img)
+
+%% Size and number of color channels
+[rows, columns, numberofcolorbands] = size(img);
+
+%% Get an N by 3 array of all the RGB values.  Each pixel is one row (RGB)
+% Column 1, 2 and three are red, green and blue values, respectively
+listOfRGBValues = double(reshape(img, rows * columns, numberofcolorbands));
+% listOfRGBValues_ref = double(reshape(img_ref, rows * columns, 3));
+X = listOfRGBValues.';
+N = size(listOfRGBValues, 1); % number of pixels
+
+%% Plot pixels in color space 
+% % To limit the number of points, only plot every 100th point
+% figure()
+% hold on 
+% for i = 1:100:N
+%     mycolor = listOfRGBValues(i,:);
+%     mycolor = max(mycolor, [0 0 0]);
+%     mycolor = min(mycolor, [1 1 1]);
+%     plot3(listOfRGBValues(i,1), listOfRGBValues(i,2), ...
+%         listOfRGBValues(i,3), '.', 'Color', mycolor);
+% end
+% xlabel('Red'), ylabel('Green'), zlabel('Blue');
+% xlim([0 1]), ylim([0 1]), zlim([0 1]);
+% hold off
+% axis equal
+
+%% Principal Component Analysis (PCA)
+
+% % % Mean of each observation
+% % % M = (1/N) .* mean(X);
+% % % % Mean-deviation form B
+% % % B = X - M;
+% % % % Sample covariance S
+% % % S = (1/(N-1)) .* B*B.'
+% % % [size(M) size(B)]
+% % % % Eigenvalues and eigenvectors of S
+% % % [P, D] = eig(S);
+% % % % Compute the percentages of the total variance explained (displayed) 
+% % % % by the principal components. That is, percentge of information contained 
+% % % % in each principal component image
+% % % prct_pca1 = D(1,1)/trace(D);
+% % % prct_pca2 = D(2,2)/trace(D);
+% % % prct_pca3 = D(3,3)/trace(D);
+
+% Get the principal components (eigenvectors of the covariance matrix S 
+% of the mean-deviation form of the 2D RGB matrix data)
+% score is P .* B.' representing the transform into PCA space
+% latent are eigenvalues of S
+[coeff, score, latent] = pca(listOfRGBValues); % det samme om argumentet er B.'
+% Take the components and transform the RGB list into a PCA list
+% transformedImagePixelList = listOfRGBValues * coeff; % X * P
+
+% transformedImagePixelList is also an N by 3 matrix of values
+% Column 1, 2 and 3 is the values of 1st, 2nd and 3rd principal component
+% Extract each column and reshape back into a rectangular image the same size as the original image
+img_pca1 = double(reshape(score(:,1), rows, columns));
+img_pca2 = double(reshape(score(:,2), rows, columns));
+img_pca3 = double(reshape(score(:,3), rows, columns));
+
+% Compute the percentages of the total variance explained (displayed) 
+% by the principal components. That is, percentge of information contained 
+% in each principal component image
+prct_pca1 = (latent(1)/sum(latent)) * 100;
+prct_pca2 = (latent(2)/sum(latent)) * 100;
+prct_pca3 = (latent(3)/sum(latent)) * 100;
+
+% figure(); imshow(img_pca1, []);
+% title(['1st Principal Component Image: ' num2str(round(prct_pca1,3)) '%'], ...
+%     'FontSize', 12, 'Interpreter', 'None');
+% figure(); imshow(img_pca2, []);
+% title(['2nd Principal Component Image: ' num2str(round(prct_pca2,3)) '%'], ...
+%     'FontSize', 12, 'Interpreter', 'None');
+% figure(); imshow(img_pca3, []);
+% title(['3rd Principal Component Image: ' num2str(round(prct_pca3,3)) '%'], ...
+%     'FontSize', 12, 'Interpreter', 'None');
+
+%% Plot PCA space of the first two PCs: PCA1 and PCA2
+% figure()
+% plot(img_pca1, img_pca2, 'k.') % score(1:100:end,1) score(1:100:end,2)
+% xlabel('1st Principal Component')
+% ylabel('2nd Principal Component')
+% title('Principal Component Space', 'FontSize', 12, 'Interpreter', 'None');
+
+%% Clear temporary variables
+clear row columns numberofcolorbands listOfRGBValues X N ...
+    transformedImagePixelList prct_pca1 prct_pca2 prct_pca3;
+
+end

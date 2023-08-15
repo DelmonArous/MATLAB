@@ -1,0 +1,416 @@
+function [areastats_colony, redstats_colony, greenstats_colony, ...
+    bluestats_colony, graystats_colony, pca1stats_colony, ...
+    pca2stats_colony, confluency] = testSegmentation(sourcepath, ...
+    destpath, sourcepath_dish, pixelsize)
+
+[~, filename , ext] = fileparts(sourcepath);
+
+%% If a valid screen size is returned (MATLAB was run without -nodisplay)
+if usejava('jvm') && feature('ShowFigureWindows')
+    % Start progress bar
+    progress = waitbar(0, [[filename ext] ': Reading colony image'], ...
+        'Name', 'Segmenting colonies...', ...
+        'CreateCancelBtn', 'setappdata(gcbf,''canceling'',1)');
+    setappdata(progress, 'canceling', 0);
+    pause(1)
+end
+
+%% Read RGB image with color channels
+[img_in, ~] = imread(sourcepath);
+img_original = img_in;
+% figure(); imshow(img_in, [])
+
+% LAB = rgb2lab(img_in);
+% L = LAB(:,:,1)/100;
+% L = adapthisteq(L, 'NumTiles', [8 8], 'ClipLimit', 0.005);
+% LAB(:,:,1) = L*100;
+% img_in = lab2rgb(LAB);
+
+% Extract color channel and normalize between [0,1]
+redchannel = double(img_in(:,:,1));    
+greenchannel = double(img_in(:,:,2)); 
+bluechannel = double(img_in(:,:,3));
+img_red = (redchannel - min(min(redchannel))) ./ ...
+    abs(max(max(redchannel)) - min(min(redchannel)));
+img_green = (greenchannel - min(min(greenchannel))) ./ ...
+    abs(max(max(greenchannel)) - min(min(greenchannel)));
+img_blue = (bluechannel - min(min(bluechannel))) ./ ...
+    abs(max(max(bluechannel)) - min(min(bluechannel)));
+
+% Create spatial refrencing object addociated with the image to use it to
+% set the x- and y-axes limits in the world coordinate system
+sizex = size(img_in, 2);
+sizey = size(img_in, 1);
+xmax = sizex * pixelsize;
+ymax = sizey * pixelsize;
+RI = imref2d(size(img_in));
+RI.XWorldLimits = [0 xmax];
+RI.YWorldLimits = [0 ymax];
+
+%% Update progress bar
+if exist('progress', 'var') && ishandle(progress) && ...
+        getappdata(progress, 'canceling')
+    delete(progress)
+    delete(findall(0, 'type', 'figure', 'tag', 'TMWWaitbar'))
+    return
+end
+if exist('progress', 'var') && ishandle(progress)    
+    waitbar(0.1, progress, [[filename ext] ...
+        ': Grayscale conversion and normalization'], ...
+        'Name', 'Segmenting colonies...');
+    pause(1)
+end
+
+%% Convert to grayscale
+img_in = double(rgb2gray(img_in));
+% figure(); imshow(I_in, [])
+
+%% Normalization between 0-1
+[img_norm, img_norm2] = normalizationMinMax(img_in);
+img_gray = img_norm;
+% figure(); imshow(I_norm, [])
+% title('Normalization between 0-1')
+
+%% Update progress bar
+if exist('progress', 'var') && ishandle(progress) && ...
+        getappdata(progress, 'canceling')
+    delete(progress)
+    delete(findall(0, 'type', 'figure', 'tag', 'TMWWaitbar'))
+    return
+end
+if exist('progress', 'var') && ishandle(progress)
+    waitbar(0.2, progress, [[filename ext] ...
+        ': Cell dish border extraction'], ...
+        'Name', 'Segmenting colonies...');
+end
+
+%% Principal component analysis (PCA)
+[~, ~, ~, img_pca1, img_pca2, ~] = runPCA(double(img_original));
+img_pca2_norm = (img_pca2 - min(min(img_pca2))) ./ ...
+    abs(max(max(img_pca2)) - min(min(img_pca2)));
+if mean(mean(img_pca2_norm)) > 0.45
+    img_pca2_norm = imcomplement(double(img_pca2_norm));
+end
+img_pca2_norm(img_pca2_norm > 0.8) = 0.8;
+
+
+%% Attain only the areas within the cell dish/flask
+bw_border = getCellContainerBorder(sourcepath_dish, destpath, filename, img_pca2_norm);
+img_pca2_norm = bw_border .* img_pca2_norm;
+% figure(); imshow(bw_border, [])
+% title('Remove flask rim')
+
+%% Update progress bar
+if exist('progress', 'var') && ishandle(progress) && ...
+        getappdata(progress, 'canceling')
+    delete(progress)
+    delete(findall(0, 'type', 'figure', 'tag', 'TMWWaitbar'))
+    return
+end
+if exist('progress', 'var') && ishandle(progress)
+    waitbar(0.3, progress, [[filename ext] ...
+        ': Filtration and histogram equalization'], ...
+        'Name', 'Segmenting colonies...');
+    pause(1)
+end
+
+%% Guassian filtering and removal of outliers
+% Magnus A549: [3 3] og 6
+% Ingunn T47D: [3 3] og 6
+% Hilde A549: [5 5] og 30
+% Gaussian filtering
+img_norm1 = imgaussfilt(img_pca2_norm, [4 4]);
+% Opening-by-Reconstruction
+img_e = imerode(img_norm1, strel('disk', 6));
+img_obr = imreconstruct(img_e, img_norm1); 
+% Opening-Closing-by-Reconstruction
+img_obrd = imdilate(img_obr, strel('disk', 6));
+img_obrcbr = imreconstruct(imcomplement(img_obrd), imcomplement(img_obr));
+img_norm1 = imcomplement(img_obrcbr);
+figure(); imshow(img_norm1, [])
+img_norm1(img_norm1 > 0.8) = 0.8;
+img_norm = img_norm1;
+
+% %% Background correction
+% if mean(mean(img_pca2_norm)) < 0.45
+%     img_norm = imtophat(img_norm1, strel('disk', 90));
+% else
+%     img_norm = imbothat(img_norm1, strel('disk', 90));
+% end
+
+%% Perform CLAHE (histogram equalization)
+% J = adapthisteq(img_norm, 'NumTiles', [16 16], 'ClipLimit', 0.02);
+img_norm = (adapthisteq(img_norm) - min(min(adapthisteq(img_norm)))) ./ ...
+    abs(max(max(adapthisteq(img_norm))) - min(min(adapthisteq(img_norm))));
+figure(); imshow(img_norm, [])
+% title('Histogram equalization')
+
+%% Update progress bar
+if exist('progress', 'var') && ishandle(progress) && ...
+        getappdata(progress, 'canceling')
+    delete(progress)
+    delete(findall(0, 'type', 'figure', 'tag', 'TMWWaitbar'))
+    return
+end
+if exist('progress', 'var') && ishandle(progress)
+    waitbar(0.4, progress, [[filename ext] ...
+        ': BLOB extraction by K-means'], ...
+        'Name', 'Segmenting colonies...');
+end
+
+%% Edge detection by iterative Otsu segmentation
+% Magnus A549: area(1) = 140, area(2) = 8000
+% Ingunn T47D: area(1) = 110, area(2) = 8000
+% Hilde A549: area(1) = 500, area(2) = 8000
+area = [60 8000]; 
+
+bw_BLOBs = extractBLOBs(img_norm.*bw_border, bw_border, area(1));
+% figure(); imshow(bw_BLOBs, [])
+
+%% Estimate staining density
+area_original = sum(bw_border(:));
+area_staining = sum(bw_BLOBs(:));
+confluency = area_staining/area_original; % cell density
+
+%% Update progress bar
+if exist('progress', 'var') && ishandle(progress) && ...
+        getappdata(progress, 'canceling')
+    delete(progress)
+    delete(findall(0, 'type', 'figure', 'tag', 'TMWWaitbar'))
+    return
+end
+if exist('progress', 'var') && ishandle(progress)
+    waitbar(0.5, progress, [[filename ext] ...
+        ': Watershed segmentation of BLOBs'], ...
+        'Name', 'Segmenting colonies...');
+end
+
+%% Segmentation of big BLOBs
+bw_seg = watershedBLOBs(bw_BLOBs, img_norm, area);
+
+% Colony mean intensity feature
+areastats_colony = regionprops(bw_seg, img_norm, 'MeanIntensity');
+all_meanintensities = [areastats_colony.MeanIntensity];
+
+%% Update progress bar
+if exist('progress', 'var') && ishandle(progress) && ...
+        getappdata(progress, 'canceling')
+    delete(progress)
+    delete(findall(0, 'type', 'figure', 'tag', 'TMWWaitbar'))
+    return
+end
+if exist('progress', 'var') && ishandle(progress)
+    waitbar(0.9, progress, [[filename ext] ...
+        ': Post-segmentation correction'], ...
+        'Name', 'Segmenting colonies...');
+    pause(1)
+end
+
+%% Post-segmentation correction
+% Magnus A549: 0.25
+% Ingunn T47D: 0.2
+% Hilde A549: 0.05 for < 10 Gy og 0.1 for 10 Gy
+bw_seg = bwpropfilt(bw_seg, 'Eccentricity', [0 0.98]); % 0.95 Hilde
+bw_seg = bwpropfilt(bw_seg, 'Area', [0.5*area(1) 2*area(2)]);
+bw_seg = bwpropfilt(bw_seg, img_norm, 'MeanIntensity', ...
+    [0.2*max(all_meanintensities(:)) max(all_meanintensities(:))]);
+
+% Color-based segmentation using HSV space
+hsv = im2double(rgb2hsv(double(img_original)));
+hue = hsv(:,:,1) .* bw_seg;
+sat = hsv(:,:,2) .* bw_seg;
+temp_mask = hue >= 0.5 & hue <= 0.71; % aqua, teal, blue, navy, fuchsia, purple
+[r,c] = find(temp_mask);
+bw_seg = bwselect(bw_seg, c, r, 8);
+
+satstats_colony = regionprops(bw_seg, sat, 'MaxIntensity', 'PixelIdxList');
+for i = 1:numel(satstats_colony)
+    sat(satstats_colony(i).PixelIdxList) = ...
+        0.8*satstats_colony(i).MaxIntensity;
+end
+
+% Magnus A549: 0.2
+% Ingunn T47D: 0.2
+% Hilde A549: 0.15 for < 10 Gy og 0.5 for 10 Gy
+satstats_colony = regionprops(bw_seg, sat, 'MeanIntensity');
+all_meansatintensities = [satstats_colony.MeanIntensity];
+bw_seg = bwpropfilt(bw_seg, sat, 'MeanIntensity', ... 
+    [0.2*max(all_meansatintensities(:)) max(all_meansatintensities(:))]);
+
+% Color-based segmentation using HSV space
+% lab = im2double(rgb2lab(double(img_original)));
+% % lab = im2single(lab(:,:,1:3));
+% % ab(:,:,1) = ab(:,:,1) .* bw_seg;
+% % ab(:,:,2) = ab(:,:,2) .* bw_seg;
+% 
+% b = lab(:,:,3) .* bw_seg; 
+% % figure(); imshow(a, [])
+% % figure(); imshow(b, [])
+% 
+% % Flood all alleged colony segments with regional minimum b* value
+% bstats_colony = regionprops(bw_seg, b, 'MinIntensity', 'MaxIntensity', ...
+%     'PixelIdxList');
+% for i = 1:numel(bstats_colony)
+%     b_extremevalues = [bstats_colony(i).MinIntensity ...
+%         bstats_colony(i).MaxIntensity];
+%     [~, ind] = max(abs(b_extremevalues));
+%     b_value = b_extremevalues(ind);
+%     b(bstats_colony(i).PixelIdxList) = 0.8*b_value;
+% end
+% 
+% bstats_colony = regionprops(bw_seg, b, 'MeanIntensity');
+% all_meanbintensities = [bstats_colony.MeanIntensity];
+% bw_seg = bwpropfilt(bw_seg, b, 'MeanIntensity', ...
+%     [min(all_meanbintensities(:)) 0.22*min(all_meanbintensities(:))]);
+
+% ab(:,:,1) = a .* bw_seg;
+% ab(:,:,2) = b .* bw_seg;
+% ab = im2single(ab);
+
+% myfunc = @(X,K)(kmeans(X, K, 'emptyaction', 'singleton', ...
+%     'replicate', 5, 'MaxIter', 1000));
+% eva = evalclusters(b, myfunc, ... % reshape(ab, size(ab,1)*size(ab,2), [])
+%     'DaviesBouldin', 'klist', [2:3])
+% if eva.OptimalK == 3
+%     pixel_labels = imsegkmeans(im2single(b), 3, ...
+%         'NumAttempts', 5, 'MaxIterations', 1000);
+%     pixel_labels = imfill(pixel_labels, 8);
+%     figure(); imshow(pixel_labels, [])
+%     figure(); imshow(bw_seg, [])
+%     temp_mask = pixel_labels == 3;
+%     temp_mask = bwpropfilt(temp_mask, 'Area', [40 2*a(2)]);
+%     [r,c] = find(temp_mask);
+%     bw_seg = bwselect(bw_seg, c, r, 8);
+%     figure(); imshow(bw_seg, [])
+% end
+
+%% Colony feature estimations; area, RGB, gray, PCA1 and PCA2
+areastats_colony = regionprops(bw_seg, 'Area', 'Centroid', 'PixelIdxList');
+redstats_colony = regionprops(bw_seg, img_red, 'PixelValues');
+greenstats_colony = regionprops(bw_seg, img_green, 'PixelValues');
+bluestats_colony = regionprops(bw_seg, img_blue, 'PixelValues');
+graystats_colony = regionprops(bw_seg, img_gray, 'PixelValues');
+pca1stats_colony = regionprops(bw_seg, img_pca1, 'PixelValues');
+pca2stats_colony = regionprops(bw_seg, img_pca2, 'PixelValues');
+for i = 1:length(areastats_colony)
+    redstats_colony(i).MedianIntensity = ...
+        median(redstats_colony(i).PixelValues);
+    greenstats_colony(i).MedianIntensity = ...
+        median(greenstats_colony(i).PixelValues);
+    bluestats_colony(i).MedianIntensity = ...
+        median(bluestats_colony(i).PixelValues);
+    graystats_colony(i).MedianIntensity = ...
+        median(graystats_colony(i).PixelValues);
+    pca1stats_colony(i).MedianIntensity = ...
+        median(pca1stats_colony(i).PixelValues);
+    pca2stats_colony(i).MedianIntensity = ...
+        median(pca2stats_colony(i).PixelValues);
+    
+    redstats_colony(i).SD = std(redstats_colony(i).PixelValues);
+    greenstats_colony(i).SD = std(greenstats_colony(i).PixelValues);
+    bluestats_colony(i).SD = std(bluestats_colony(i).PixelValues);
+    graystats_colony(i).SD = std(graystats_colony(i).PixelValues);
+    pca1stats_colony(i).SD = std(pca1stats_colony(i).PixelValues);
+    pca2stats_colony(i).SD = std(pca2stats_colony(i).PixelValues);
+end
+all_areas = [areastats_colony.Area] .* pixelsize^2;
+mean_area = mean(all_areas);
+SD_area = std(all_areas);
+
+if isfield(redstats_colony, 'PixelValues')
+    redstats_colony = rmfield(redstats_colony, 'PixelValues');
+end
+if isfield(greenstats_colony, 'PixelValues')
+    greenstats_colony = rmfield(greenstats_colony, 'PixelValues');
+end
+if isfield(bluestats_colony, 'PixelValues')
+    bluestats_colony = rmfield(bluestats_colony, 'PixelValues');
+end
+if isfield(graystats_colony, 'PixelValues')
+    graystats_colony = rmfield(graystats_colony, 'PixelValues');
+end
+if isfield(pca1stats_colony, 'PixelValues')
+    pca1stats_colony = rmfield(pca1stats_colony, 'PixelValues');
+end
+if isfield(pca2stats_colony, 'PixelValues')
+    pca2stats_colony = rmfield(pca2stats_colony, 'PixelValues');
+end
+
+%% Plot delineated segmented colonies
+% h = figure(); 
+% set(h, 'units', 'normalized', 'outerposition', [0 0 1 1]);
+% imshow(imoverlay(img_original, bwperim(bw_seg), 'red')) % ,  RI)
+% xlabel('mm')
+% ylabel('mm')
+% set(gca, 'FontSize', 12)
+
+h = figure();
+% set(h, 'units', 'normalized', 'outerposition', [0 0 1 1]);
+imshow(img_original)
+hold on
+visboundaries(bw_seg, 'Color', 'red', 'LineWidth', 1) %#
+errorbar(0.1*size(bw_seg,2), 0.95*size(bw_seg,1), round(1/(pixelsize)), ...
+    'horizontal', 'k.', 'LineWidth', 1.5, 'CapSize', 6);
+text(0.1*size(bw_seg,2), 0.95*size(bw_seg,1), {'2 mm'}, ...
+    'HorizontalAlignment', 'center', 'VerticalAlignment', 'top', 'Fontsize', 12);
+hold off
+set(gca, 'FontSize', 14)
+saveas(h, fullfile(destpath, sprintf('%s-Seg.fig', filename)))
+
+% Save final segmented colony mask
+writematrix(bw_seg, fullfile(destpath, sprintf('%s-SegMask.csv', filename)))
+
+% str = {'CFU assessment'; ...
+%     ['Filename: ' filename]; ...
+%     ['Colony count: ' num2str(numel(areastats_colony))]; ...
+%     ['Staining fraction: ' num2str(round(staining_fraction, 2)) '%']; ...
+%     ['A_{colony} = ' num2str(round(mean_area, 3)) '\pm' ...
+%     num2str(round(SD_area, 3)) ' mm^2']};
+% str{1} = ['\bf ', str{1}, ' \rm'];
+% txtbox = annotation('textbox', [0.7, 0.45 0.50 0.50], 'String', str, ...
+%     'FitBoxToText', 'on'); % [0.1, 0.4 0.55 0.55]
+% txtbox.FontSize = 11;
+% hold off
+% set(gca, 'FontSize', 14)
+% saveas(h, fullfile(destpath, sprintf('%s-Seg.fig', filename)))
+
+%% Superimpose colormap on image and plot
+% SI_img_mask = img_norm .* bw_seg;
+% h = figure(); imshow(img_original, RI)
+% set(h, 'units', 'normalized', 'outerposition', [0 0 1 1]);
+% hold on
+% ih = imshow(SI_img_mask, RI, [], 'colormap', jet(4096));
+% set(ih, 'AlphaData', SI_img_mask > 0)
+% colormap(jet(4096))
+% hold off
+% cb = colorbar;
+% cb.Label.String = 'Relative Staining Intensity (a.u)';
+% caxis([0 ceil(max(SI_img_mask(:)))])
+% xlabel('mm')
+% ylabel('mm')
+% shading interp
+% set(gca, 'FontSize', 14)
+% saveas(h, fullfile(destpath, sprintf('%s-Heat.fig', filename)))
+
+%% Update progress bar
+if exist('progress', 'var') && ishandle(progress) && ...
+        getappdata(progress, 'canceling')
+    delete(progress)
+    delete(findall(0, 'type', 'figure', 'tag', 'TMWWaitbar'))
+    return
+end
+if exist('progress', 'var') && ishandle(progress)
+    waitbar(1.0, progress, 'Segmentation completed', ...
+        'Name', 'Segmenting colonies...');
+    pause(1)
+end
+
+%% Close waitbar
+if exist('progress', 'var') && ishandle(progress)
+    close(progress);
+end
+
+%% Delete progress handle if it exists
+if exist('progress', 'var') && ishandle(progress), delete(progress); end
+
+end

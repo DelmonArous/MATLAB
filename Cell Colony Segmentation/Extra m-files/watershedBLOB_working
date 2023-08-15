@@ -1,0 +1,163 @@
+function [L] = watershedBLOB(img, bw_BLOB, param, ws_vec, flag)
+
+warning('off', 'all')
+
+% Parameters
+area = param.area;
+medianarea = param.medianarea;
+BLOBsize = nnz(bw_BLOB); % (find(bw_BLOB == 1)); % BLOB size when bw_BLOB == 1
+boundary_BLOB = imdilate(bwperim(bw_BLOB), ones(3));
+% Expected number of colonies to be found for each BLOB
+E_m = ceil(BLOBsize/(medianarea));
+% BLOB properties
+stats_BLOB = regionprops(bw_BLOB, 'Area', 'Eccentricity', 'Circularity');
+
+img_adapthisteq = adapthisteq(img);
+L = cell(size(img,1), size(img,2), numel(ws_vec));
+y = (-1) .* ones(length(ws_vec), 1);
+%figure(); imshow(boundary_BLOB, [])
+%img_complement = imcomplement(img);
+%figure(); imshow(img_complement, [])
+
+%% Watershed only if BLOBs are of more elongated shape
+if flag || (stats_BLOB.Eccentricity > 0.4 || stats_BLOB.Circularity < 0.6)
+    
+    % Loop through each watershed segmentation threshold
+    for i = 1:length(ws_vec)
+        
+        img_adapthisteq(img_adapthisteq > prctile(img_adapthisteq(:),95)) ...
+            = prctile(img_adapthisteq(:),95); % new
+        img_adapthisteq = imfill(img_adapthisteq, 'holes'); % new
+        % find only regional maxima that are larger than neighboring pixels
+        % by a selected threshold
+        bw_em = imextendedmax(img_adapthisteq, ws_vec(i));
+        bw_em = imfill(bw_em, 'holes');
+        bw_em = imopen(bw_em, strel('disk', 3)); % new
+        % Remove all parts of the conglomerate BLOB that are located
+        % outside the boundary of the BLOB
+        bmask = boundary_BLOB & bw_em;
+        bw_em = bw_em - bmask;
+        bw_em = imclearborder(bw_em);
+%         I_mod = imimposemin(img_complement, ~bw_BLOB | bw_em); % not new
+%         uncomment
+        % Euclidean distance transform
+        D = -bwdist(~bw_em);
+        bw_em = imextendedmin(D,2);
+        D = imimposemin(D, bw_em);
+        % Watershed
+        Ld = watershed(D);
+        bw_em = bw_BLOB;
+        bw_em(Ld == 0) = 0;
+        bw_em = ~bwperim(bw_em, 8);
+        L{i} = logical(imclearborder(bw_em));
+        if max(max(bwlabel(L{i}))) < 2
+            L{i} = bw_BLOB;
+        end
+        
+        % Watershed Not new!! uncomment
+%         Ld = watershed(I_mod);
+%         Ld(Ld > 0) = 1;
+%         L{i} = logical(imclearborder(Ld));
+
+        count = max(max(bwlabel(L{i})));
+        stats = regionprops(logical(L{i}), 'Area', 'Eccentricity', ...
+            'Circularity');
+        mu_vec = (-1) .* ones(length(stats),1);
+        
+        % Calculate the quality criteria
+        for j = 1:length(stats)
+            mu_1   = evalmf(stats(j).Area, [area(1) area(2) ...
+                max(area(3),area(2)*2) area(4)], 'pimf');
+            mu_2 = evalmf(stats(j).Circularity, [0.15 0.5 0.9 1], 'pimf');
+            mu_vec(j) = mu_1*mu_2;
+        end
+        
+        if sum(sum(bw_BLOB)) > 2*area(4)
+            mu_vec = median(mu_vec);
+        else
+            mu_vec = prod(mu_vec);
+        end
+        mu_3 = evalmf(count, [1 E_m 2*E_m 3*E_m-1], 'pimf');
+        y(i) = (mu_vec*mu_3);
+        
+    end
+    
+    % % Select the result with maximum quality
+    if max(y) > 0
+        if E_m == 1
+            ind  = find(y > 0);
+        else
+            ind  = find(y == max(y));
+        end
+        L  = L{ind(1)};
+    else
+        % If the automatic loop fails enter a detour one-go
+        % segmentation based on supressing outlier pixels on the higher
+        % side of the image intensity histogram
+        %         maxthresh = prctile(img(:),95);
+        %         img(img > maxthresh) = median(img(:));
+        %         img = imfill(img, 'holes');
+        %         mask_em = imextendedmax(img, 0.25*mean(ws_vec));
+        %         mask_em = imfill(mask_em, 'holes');
+        %         mask_em = imopen(mask_em, strel('disk', 4));
+        %         mask_em = bwpropfilt(mask_em, 'Area', [50 a(4)]);
+        %         bmask = boundary_BLOB & mask_em;
+        %         mask_em = mask_em - bmask;
+        %         mask_em = imclearborder(mask_em);
+        %         img_complement = imcomplement(img);
+        %         I_mod = imimposemin(img_complement, ~bw_BLOB | mask_em);
+        %         Ld = watershed(I_mod);
+        %         Ld(Ld > 0) = 1;
+        %         L = imclearborder(Ld);
+        %         if max(max(bwlabel(L))) < 2
+        %             L = bw_BLOB;
+        %         end
+        
+            %     if stats_BLOB.Eccentricity > 0.98
+    %         D = -bwdist(~bw_BLOB);
+    %         bw_em = imextendedmin(D,2);
+    %         D = imimposemin(D, bw_em);
+    %         Ld = watershed(D);
+    %         bw_temp = bw_BLOB;
+    %         bw_temp(Ld == 0) = 0;
+    %         bw_temp = ~bwperim(bw_temp, 8);
+    %         L = imclearborder(bw_temp);
+    %         if max(max(bwlabel(L))) < 2
+    %             L = bw_BLOB;
+    %         end
+    %     else
+        
+        img(img > prctile(img(:),95)) = prctile(img(:),95);
+        img = imfill(img, 'holes');
+        bw_em = imextendedmax(img, 0.25*mean(ws_vec)); % 0.05
+        bw_em = imfill(bw_em, 'holes');
+        bw_em = imopen(bw_em, strel('disk', 3));
+        bmask = boundary_BLOB & bw_em;
+        bw_em = bw_em - bmask;
+        bw_em = imclearborder(bw_em);
+        D = -bwdist(~bw_em); % bw_BLOB
+        bw_em = imextendedmin(D,2);
+        D = imimposemin(D, bw_em);
+        Ld = watershed(D);
+        bw_em = bw_BLOB;
+        bw_em(Ld == 0) = 0;
+        bw_em = ~bwperim(bw_em, 8);
+        L = logical(imclearborder(bw_em));
+        if max(max(bwlabel(L))) < 2
+            L = bw_BLOB;
+        end
+%         figure(); imshow(L, [])
+%         regionprops(logical(L))
+        
+    end
+    
+else
+    L = zeros(size(img));
+end
+
+%% Clear temporary variables
+clear a img_adapthisteq y BLOBsize E_ncolonies stats_BLOB boundary_BLOB ...
+    img_complement D bw_em bw_temp bmask I_mod Ld count stats ...
+    mu mu1 mu2 mu3 ind
+
+end

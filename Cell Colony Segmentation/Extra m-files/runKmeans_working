@@ -1,0 +1,73 @@
+function [bw] = runKmeans(img)
+
+% The following variables are required for execution: 
+%   img = input image containing the cell colony conglomerations (BLOBs). 
+%
+% The following variables are returned upon succesful completion when input 
+% arguments are provided:
+%   bw = binary mask containing the BLOBs of the inquired cell colonies. 
+
+
+%% Design the feature matrix Z
+new_img = zeros(size(img)+2);
+new_img(2:end-1,2:end-1) = double(img);
+
+% Image boundary coordinates without first/last row/column
+inner_coord = [2 2; size(new_img,1)-1 size(new_img,2)-1];
+
+% 9x2 matrix with 1 row for the relative shift to reach neighbors
+[d2, d1] = meshgrid(-1:1, -1:1);
+displacement = [d1(:) d2(:)];
+
+% Cell array to store all 9 shifted images
+temp = {};
+
+for i = 1:size(displacement,1)
+    
+   % X-indices of the submatrix when shifted by d(i,1)
+   Xcoord = (inner_coord(1,1):inner_coord(2,1)) + displacement(i,1);
+   
+   % Y-indices of the submatrix when shifted by d(i,2)
+   Ycoord = (inner_coord(1,2):inner_coord(2,2)) + displacement(i,2);
+   
+   % Image matrix resulting from shift by displacement(i,)
+   temp{i} = reshape(new_img(Xcoord, Ycoord), 1, []);
+   
+end
+
+% Column-wise bind all 9 shifted images (as vectors) from the array
+Z_feat = vertcat(temp{:}).';
+
+%% K-means acquisition
+
+% Number of clusters that will definitely be present
+k = 2; % background/foreground
+
+% Define background-/foreground centroid-cluster vector
+start_mat = [repelem(1,9); repelem(0.2,9)];
+
+% The feature matrix Z is now size(img,1)*size(img,2)-by-9
+[clusterIndexes, ~] = kmeans(Z_feat, k, 'Distance', 'sqeuclidean', ...
+    'MaxIter', 1000, 'Start', start_mat); % 'Replicates', 5
+img_Kmean = reshape(clusterIndexes, size(img,1), size(img,2));
+
+% Each BLOB is assign with different color to visually show the distinct BLOBs
+% coloredLabels = label2rgb (img_Kmean, 'hsv', 'k', 'shuffle'); % pseudo random color labels
+% % coloredLabels is an RGB image (colormap could also be applied instead) 
+% figure(); imshow(coloredLabels)
+
+% Get pixels that are labeled as colonies 
+[maxValue, indexOfMaxValue] = max(img_Kmean);
+
+if nnz(img_Kmean == min(img_Kmean(:))) > nnz(img_Kmean == max(img_Kmean(:)))
+    bw = (img_Kmean == max(img_Kmean(:)));
+else
+    bw = (img_Kmean == min(img_Kmean(:)));
+end
+
+%% Clear temporary variables
+clear new_img inner_coord displacement d1 d2 temp Z Xcoord Ycoord ...
+    k start_mat clusterIndexes clusterCenters img_Kmean maxValue ...
+    indexOfMaxValue;
+
+end
