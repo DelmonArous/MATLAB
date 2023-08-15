@@ -1,0 +1,52 @@
+clear all;
+
+c = 1.0;
+m = (0.511*10^6)/c^2;
+V0 = 10.0;
+a = 1.0;
+z0 = 16.2;
+
+x = linspace(-2,2,1000);
+z = linspace(0,17.0,1000);
+
+fz = sqrt((z0./z).^2-1);
+
+hold on
+plot(z, tan(z))
+plot(z, fz, 'r')
+legend('tan(z)','sqrt((z0/z)^2-1)')
+xlabel('z')
+ylabel('f(z)')
+hold off
+figure;
+hold on
+plot(z, cot(z))
+plot(z, -fz, 'r')
+legend('cot(z)','-sqrt((z0/z)^2-1)')
+xlabel('z')
+ylabel('f(z)')
+hold off
+
+l1 = 1.497;
+l2 = 2.958; 
+kappa1 = l1*tan(l1*a);
+kappa2 = -l2*cot(l2*a);
+
+A_sym = exp(kappa1*a)*cos(l1*a)/sqrt(a+(1/kappa1))
+A_antisym = -exp(kappa2*a)*sin(l2*a)/sqrt(a+(1/kappa2));
+B_sym = 1/sqrt(a+(1/kappa1));
+B_antisym = 1/sqrt(a+(1/kappa2));
+
+psi1 = (A_sym*exp(-kappa1*x)).*(x>a) + (B_sym*cos(l1*x)).*(x>=-a & x<=a)... 
+    + (A_sym*exp(kappa1*x)).*(x<-a);
+psi2 = (A_antisym*exp(-kappa2*x)).*(x>a) + (B_antisym*sin(l2*x)).*(x>=-a & x<=a)... 
+    + (-A_antisym*exp(kappa2*x)).*(x<-a);
+
+figure;
+plot(x, abs(psi1).^2)
+xlabel('x')
+ylabel('|psi_1(x)|^2')
+figure;
+plot(x, abs(psi2).^2)
+xlabel('x')
+ylabel('|psi_2(x)|^2')

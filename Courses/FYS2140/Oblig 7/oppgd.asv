@@ -1,0 +1,49 @@
+clear all;
+
+c = 3.0*10^17;
+a = 1.0;
+m = (0.511*10^6)/c^2;
+hbarc = 1240/(2*pi);
+x = linspace(-2,2,1000);
+t = 0;
+
+l1 = 1.497;
+l2 = 2.958; 
+kappa1 = l1*tan(l1*a);
+kappa2 = -l2*cot(l2*a);
+E1 = ((kappa1*hbarc)/c)^2/(-2*m);
+E2 = ((kappa2*hbarc)/c)^2/(-2*m);
+
+A_sym = exp(kappa1*a)*cos(l1*a)/sqrt(a+(1/kappa1));
+A_antisym = -exp(kappa2*a)*sin(l2*a)/sqrt(a+(1/kappa2));
+B_sym = 1/sqrt(a+(1/kappa1));
+B_antisym = 1/sqrt(a+(1/kappa2));
+
+psi1 = (A_sym*exp(-kappa1*x)).*(x>a) + (B_sym*cos(l1*x)).*(x>=-a & x<=a)... 
+    + (A_sym*exp(kappa1*x)).*(x<-a);
+psi2 = (A_antisym*exp(-kappa2*x)).*(x>a) + (B_antisym*sin(l2*x)).*(x>=-a & x<=a)... 
+    + (-A_antisym*exp(kappa2*x)).*(x<-a);
+
+% for i = 0:100
+%     t = i*10^(-17);
+%     psi = 0.5*(abs(psi1).^2+abs(psi2).^2)+ psi1.*psi2.*cos(c*(E2-E1)*t/hbarc);
+%     plot(x, psi)
+%     xlabel('x [nm]')
+%     ylabel('|Psi|^2')
+%     legend(['t=',num2str(t), ' s'])
+%     axis([-4 4 0 1.5])
+%     drawnow
+%     pause(0.001)
+% end
+% figure;
+
+for t = 0:0.001:1
+    psi = 0.5*(abs(psi1).^2+abs(psi2).^2)+ psi1.*psi2.*cos(c*(E2-E1)*t/hbarc);
+    expx = trapz(x,x.*psi);
+    plot(t, expx ,'ob')
+    xlabel('t [s]')
+    ylabel('<x(t)> [nm]')
+    axis([0 1 -1.5 1.5])
+    drawnow
+    pause(0.1)
+end
