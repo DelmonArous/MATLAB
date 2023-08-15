@@ -1,0 +1,9 @@
+dx = linspace(-pi/2,pi/2,40);
+dy = linspace(-pi/2,pi/2,40);
+
+[x,y] = meshgrid(dx,dy);
+
+u = cos(x)*sin(y);
+v = -sin(x)*cos(y);
+quiver(x,y,u,v,1.5)
+axis equal
