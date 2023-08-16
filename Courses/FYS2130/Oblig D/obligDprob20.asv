@@ -1,0 +1,23 @@
+s = 'tubaL.wav';
+[f, Fs, type] = wavread(s, 10);
+g = f(:,1);
+
+N = 2^16;
+T = 5.0;
+
+plot(T, g)
+title('Opprinnelig signal')
+xlabel('Tid [s]')
+ylabel('Funksjon [ae]')
+
+z = (1/sqrt(N))*fft(g);
+deltaF = 1.0/T;
+
+for i = 1:N
+    F(i) = deltaF*(i-1);
+end
+
+figure;
+plot(F, abs(z), '.-k')
+xlabel('Frekvens [Hz]')
+ylabel('Fourierkoeffisient [ae]')
